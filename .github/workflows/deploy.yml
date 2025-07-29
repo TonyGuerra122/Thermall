@@ -28,7 +28,7 @@ jobs:
     - name: 📤 Criar Release no GitHub
       uses: softprops/action-gh-release@v2
       with:
-        name: "Thermall v${{ github.ref_name }}"
+        name: "Thermall ${{ github.ref_name }}"
         tag_name: ${{ github.ref_name }}
         draft: false
         prerelease: false
