@@ -195,7 +195,7 @@ void handleTerminalInput(Terminal* terminal) {
 
 		char status[256];
 		const char* saved = terminal->isSaved ? "(Saved)" : "(Unsaved)";
-		double memUsage = showHeader(terminal);
+		double memUsage = estimateMemoryCost(terminal);
 		snprintf(status, sizeof(status), "File: (%s) Line: %d Column: %d Total Lines: %zu Mem: %.2fMB Saved: %s",
 			terminal->filename, cursorY + 1, cursorX + 1, terminal->lineCount, memUsage, saved);
 
@@ -220,7 +220,7 @@ void freeTerminal(Terminal* terminal) {
 	}
 }
 
-double showHeader(const Terminal* terminal) {
+double estimateMemoryCost(const Terminal* terminal) {
 	if (!terminal) return 0.0;
 
 	double totalSize = sizeof(Terminal);

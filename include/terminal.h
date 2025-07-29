@@ -23,7 +23,7 @@ void handleTerminalInput(Terminal* terminal);
 void freeTerminal(Terminal* terminal);
 
 // Função para estimar o uso de memória do terminal
-double showHeader(const Terminal* terminal);
+double estimateMemoryCost(const Terminal* terminal);
 
 // Função para salvar o conteúdo do terminal em um arquivo
 void saveFile(Terminal* terminal);
