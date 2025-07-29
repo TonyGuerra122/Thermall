@@ -163,6 +163,21 @@ void handleTerminalInput(Terminal* terminal) {
 				terminal->lineCount--;
 				cursorY--;
 			}
+			terminal->isSaved = false;
+			break;
+		case KEY_DC:
+			if ((size_t)cursorX < terminal->lines[cursorY]->length) {
+				delete_char(terminal->lines[cursorY], (size_t)cursorX);
+			}
+			else if ((size_t)cursorY + 1 < terminal->lineCount) {
+				LineText* nextLine = terminal->lines[cursorY + 1];
+				strcat(terminal->lines[cursorY]->text, nextLine->text);
+				terminal->lines[cursorY]->length = strlen(terminal->lines[cursorY]->text);
+				free(nextLine);
+				memmove(&terminal->lines[cursorY + 1], &terminal->lines[cursorY + 2], sizeof(LineText*) * (terminal->lineCount - cursorY - 2));
+				terminal->lineCount--;
+			}
+			terminal->isSaved = false;
 			break;
 		default:
 			if (ch >= 32 && ch <= 126 && cursorX < COLS - 1) {
