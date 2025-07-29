@@ -1,7 +1,9 @@
 #include "../include/terminal.h"
 
-int main() {
-	Terminal* terminal = createTerminal("example.txt");
+int main(int argc, char** argv) {
+	const char* filename = argc > 1 ? argv[1] : "untitled";
+
+	Terminal* terminal = createTerminal(filename);
 
 	if (!terminal) {
 		fprintf(stderr, "Failed to create terminal\n");

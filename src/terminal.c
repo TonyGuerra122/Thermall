@@ -65,6 +65,9 @@ void handleTerminalInput(Terminal* terminal) {
 			clear();
 			mvprintw(0, 0, "Terminal resized. Press any key to continue.");
 			break;
+		case 19:
+			saveFile(terminal);
+			break;
 		case KEY_UP:
 			if (cursorY > 0) cursorY--;
 			if ((size_t)cursorX > terminal->lines[cursorY]->length)
@@ -178,8 +181,8 @@ void handleTerminalInput(Terminal* terminal) {
 		char status[256];
 		const char* saved = terminal->isSaved ? "(Saved)" : "(Unsaved)";
 		double memUsage = showHeader(terminal);
-		snprintf(status, sizeof(status), "Line: %d Column: %d Total Lines: %zu Mem: %.2fMB Saved: %s",
-			cursorY + 1, cursorX + 1, terminal->lineCount, memUsage, saved);
+		snprintf(status, sizeof(status), "File: (%s) Line: %d Column: %d Total Lines: %zu Mem: %.2fMB Saved: %s",
+			terminal->filename, cursorY + 1, cursorX + 1, terminal->lineCount, memUsage, saved);
 
 		mvprintw(LINES - 1, 0, "%s", status);
 
@@ -217,4 +220,20 @@ double showHeader(const Terminal* terminal) {
 	}
 
 	return totalSize / (1024.0 * 1024.0);
+}
+
+void saveFile(Terminal* terminal) {
+	if (!terminal || !terminal->filename) return;
+	FILE* file = fopen(terminal->filename, "w");
+	if (!file) {
+		perror("Failed to open file for writing");
+		return;
+	}
+	for (size_t i = 0; i < terminal->lineCount; i++) {
+		if (terminal->lines[i]) {
+			fprintf(file, "%s\n", terminal->lines[i]->text);
+		}
+	}
+	fclose(file);
+	terminal->isSaved = true;
 }
