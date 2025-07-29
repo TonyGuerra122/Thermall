@@ -3,7 +3,7 @@
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*.*.*' # Ex: v1.0.0
 
 permissions:
   contents: write
@@ -32,4 +32,4 @@ jobs:
         tag_name: ${{ github.ref_name }}
         draft: false
         prerelease: false
-        files: build/*.exe
+        files: build/Release/Thermall.exe
