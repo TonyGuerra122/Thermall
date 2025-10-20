@@ -17,7 +17,7 @@ set(PDCURSES_SOURCE_DIR ${PDCURSES_INSTALL_DIR}/src/PDCurses)
 ExternalProject_Add(
     PDCurses
     GIT_REPOSITORY https://github.com/wmcbrine/PDCurses.git
-    GIT_TAG master
+    GIT_TAG 3.9
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${CMAKE_COMMAND} -E copy_directory ${PDCURSES_SOURCE_DIR}/common ${PDCURSES_SOURCE_DIR}/wincon/common
                   && cd ${PDCURSES_SOURCE_DIR}/wincon && nmake -f Makefile.vc

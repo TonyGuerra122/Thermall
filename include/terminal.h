@@ -27,3 +27,8 @@ double estimateMemoryCost(const Terminal* terminal);
 
 // Função para salvar o conteúdo do terminal em um arquivo
 void saveFile(Terminal* terminal);
+
+// Função para inicializar um buffer vazio
+static bool initEmptyBuffer(Terminal* terminal);
+
+static bool loadFileLines(Terminal* terminal, const char* path);

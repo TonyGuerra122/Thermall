@@ -1,38 +1,32 @@
 #include "../include/terminal.h"
 
 Terminal* createTerminal(const char* filename) {
+	// Alocando Terminal (antes de inicializar o ncurses)
+	Terminal* terminal = (Terminal*)calloc(1, sizeof(Terminal));
+	if (!terminal) return NULL;
+
+	terminal->filename = filename ? strdup(filename) : NULL;
+	terminal->lines = NULL;
+	terminal->lineCount = 0;
+	terminal->isSaved = true;
+	bool ok = false;
+	if (terminal->filename) {
+		ok = loadFileLines(terminal, terminal->filename);
+	}
+
+	if (!ok) {
+		if (!initEmptyBuffer(terminal)) {
+			if (terminal->filename) free(terminal->filename);
+			free(terminal);
+			return NULL;
+		}
+	}
+	
 	// Inicializa curses
 	initscr();
 	keypad(stdscr, TRUE);
 	noecho();
 	curs_set(1);
-
-	// Aloca Terminal
-	Terminal* terminal = malloc(sizeof(Terminal));
-	if (!terminal) return NULL;
-
-	terminal->filename = filename ? strdup(filename) : NULL;
-	terminal->lines = malloc(sizeof(LineText*));
-	if (!terminal->lines) {
-		if (terminal->filename) free(terminal->filename);
-		free(terminal);
-		endwin();
-		return NULL;
-	}
-	terminal->lineCount = 1;
-
-	// Cria primeira linha
-	LineText* line = malloc(sizeof(LineText));
-	if (!line) {
-		if (terminal->filename) free(terminal->filename);
-		free(terminal->lines);
-		free(terminal);
-		endwin();
-		return NULL;
-	}
-	create_line_text(line, "");
-	terminal->lines[0] = line;
-	terminal->isSaved = true;
 
 	return terminal;
 }
@@ -251,4 +245,108 @@ void saveFile(Terminal* terminal) {
 	}
 	fclose(file);
 	terminal->isSaved = true;
+}
+
+bool initEmptyBuffer(Terminal* terminal) {
+	terminal->lines = (LineText**)malloc(sizeof(LineText*));
+	if (!terminal->lines) return false;
+
+	LineText* line = (LineText*)malloc(sizeof(LineText));
+	if (!line) {
+		free(terminal->lines);
+		terminal->lines = NULL;
+		return false;
+	}
+
+	create_line_text(line, "");
+	terminal->lines[0] = line;
+	terminal->lineCount = 1;
+	terminal->isSaved = true;
+	
+	return true;
+}
+
+bool loadFileLines(Terminal* terminal, const char* path) {
+	FILE* f = fopen(path, "rb");
+	if (!f) {
+		return false;
+	}
+
+	if (fseek(f, 0, SEEK_END) != 0) {
+		fclose(f);
+		return false;
+	}
+
+	long size = ftell(f);
+	if (size < 0) {
+		fclose(f);
+		return false;
+	}
+
+	rewind(f);
+
+	char* buf = (char*)malloc((size_t)size + 1);
+	if (!buf) {
+		fclose(f);
+		return false;
+	}
+
+	size_t readn = fread(buf, 1, (size_t)size, f);
+	fclose(f);
+	buf[readn] = '\0';
+
+	size_t cap = 16;
+	terminal->lines = (LineText**)malloc(cap * sizeof(LineText*));
+	if (!terminal->lines) {
+		free(buf);
+		return false;
+	}
+
+	terminal->lineCount = 0;
+
+	char* start = buf;
+	for (size_t i = 0; i <= readn; i++) {
+		bool isEol = (i == readn) || (buf[i] == '\n');
+		if (isEol) {
+			size_t len = (size_t)(buf + i - start);
+
+			while (len > 0 && start[len - 1] == '\r') len--;
+
+			char* tmp = (char*)malloc(len + 1);
+			if (!tmp) {
+				free(buf);
+				free(terminal->lines);
+				terminal->lines = NULL;
+				return false;
+			}
+			memcpy(tmp, start, len);
+			tmp[len] = '\0';
+
+			LineText* line = malloc(sizeof(LineText));
+			if (!line) {
+				free(tmp);
+				free(buf);
+				free(terminal->lines);
+				terminal->lines = NULL;
+				return false;
+			}
+
+			create_line_text(line, tmp);
+			terminal->lines[terminal->lineCount++] = line;
+
+			free(tmp);
+			start = buf + i + 1;
+		}
+	}
+
+	if (terminal->lineCount == 0) {
+		free(buf);
+		initEmptyBuffer(terminal);
+		return true;
+	}
+
+	free(buf);
+	terminal->isSaved = true;
+
+	return true;
 }
