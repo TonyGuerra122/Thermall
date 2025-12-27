@@ -21,7 +21,7 @@ Terminal* createTerminal(const char* filename) {
 			return NULL;
 		}
 	}
-	
+
 	// Inicializa curses
 	initscr();
 	keypad(stdscr, TRUE);
@@ -33,6 +33,7 @@ Terminal* createTerminal(const char* filename) {
 
 void handleTerminalInput(Terminal* terminal) {
 	int ch, cursorX = 0, cursorY = 0;
+	size_t viewTop = 0;
 
 	bool mustExit = false;
 
@@ -173,6 +174,56 @@ void handleTerminalInput(Terminal* terminal) {
 			}
 			terminal->isSaved = false;
 			break;
+		case KEY_PPAGE: {
+			int pageSize = LINES - 1;
+
+			if (cursorY > pageSize) {
+				cursorY -= pageSize;
+			}
+			else {
+				cursorY = 0;
+			}
+
+			if (viewTop >= pageSize) {
+				viewTop -= pageSize;
+			}
+			else {
+				viewTop = 0;
+			}
+
+			if ((size_t)cursorX > terminal->lines[cursorY]->length) {
+				cursorX = terminal->lines[cursorY]->length;
+			}
+
+			break;
+		}
+		case KEY_NPAGE: {
+			int pageSize = LINES - 1;
+
+			if ((size_t)cursorY + pageSize < terminal->lineCount) {
+				cursorY += pageSize;
+			}
+			else {
+				cursorY = terminal->lineCount - 1;
+			}
+
+			size_t maxViewTop = terminal->lineCount > (size_t)pageSize ?
+				terminal->lineCount - pageSize :
+				0;
+
+			if (viewTop + pageSize <= maxViewTop) {
+				viewTop += pageSize;
+			}
+			else {
+				viewTop = maxViewTop;
+			}
+
+			if ((size_t)cursorX > terminal->lines[cursorY]->length) {
+				cursorX = terminal->lines[cursorY]->length;
+			}
+
+			break;
+		}
 		default:
 			if (ch >= 32 && ch <= 126 && cursorX < COLS - 1) {
 				insert_char(terminal->lines[cursorY], cursorX, (char)ch);
@@ -183,8 +234,11 @@ void handleTerminalInput(Terminal* terminal) {
 			break;
 		}
 
-		for (size_t i = 0; i < terminal->lineCount && i < (size_t)LINES - 1; i++) {
-			mvprintw(i, 0, "%s", terminal->lines[i]->text);
+		for (size_t i = 0; i < (size_t)LINES - 1; i++) {
+			size_t lineIndex = viewTop + i;
+			if (lineIndex >= terminal->lineCount) break;
+
+			mvprintw(i, 0, "%s", terminal->lines[lineIndex]->text);
 		}
 
 		char status[256];
@@ -195,7 +249,7 @@ void handleTerminalInput(Terminal* terminal) {
 
 		mvprintw(LINES - 1, 0, "%s", status);
 
-		move(cursorY, cursorX);
+		move(cursorY - viewTop, cursorX);
 		refresh();
 	}
 }
@@ -262,7 +316,7 @@ bool initEmptyBuffer(Terminal* terminal) {
 	terminal->lines[0] = line;
 	terminal->lineCount = 1;
 	terminal->isSaved = true;
-	
+
 	return true;
 }
 

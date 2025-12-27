@@ -31,4 +31,5 @@ void saveFile(Terminal* terminal);
 // Função para inicializar um buffer vazio
 static bool initEmptyBuffer(Terminal* terminal);
 
+// Função para carregar linhas de um arquivo para o terminal
 static bool loadFileLines(Terminal* terminal, const char* path);
