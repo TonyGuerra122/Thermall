@@ -1,4 +1,9 @@
-﻿cmake_minimum_required(VERSION 3.10)
+﻿cmake_minimum_required(VERSION 3.15)
+
+# Runtime C estático (/MT): o .exe não depende do VC++ Redistributable.
+# Precisa bater com o PDCurses, que o Makefile.vc compila com /MT em qualquer configuração.
+cmake_policy(SET CMP0091 NEW)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
 # Nome do projeto
 project(Thermall C)
