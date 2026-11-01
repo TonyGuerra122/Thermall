@@ -12,11 +12,11 @@ typedef struct {
 	size_t capacity;
 }LineText;
 
-// Função para criar um LineText a partir de uma string
+// FunÃ§Ã£o para criar um LineText a partir de uma string
 void create_line_text(LineText* line, const char* text);
 
-// Função para adicionar um caractere ao final de um LineText
+// FunÃ§Ã£o para adicionar um caractere ao final de um LineText
 void insert_char(LineText* line, size_t pos, char ch);
 
-// Função para excluir um caractere de um LineText
+// FunÃ§Ã£o para excluir um caractere de um LineText
 void delete_char(LineText* line, size_t pos);

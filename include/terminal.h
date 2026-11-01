@@ -13,23 +13,17 @@ typedef struct {
 	bool isSaved;
 }Terminal;
 
-// Função para criar um terminal
+// FunÃ§Ã£o para criar um terminal
 Terminal* createTerminal(const char* filename);
 
-// Função para lidar com a entrada do terminal
+// FunÃ§Ã£o para lidar com a entrada do terminal
 void handleTerminalInput(Terminal* terminal);
 
-// Função para liberar a memória do terminal
+// FunÃ§Ã£o para liberar a memÃ³ria do terminal
 void freeTerminal(Terminal* terminal);
 
-// Função para estimar o uso de memória do terminal
+// FunÃ§Ã£o para estimar o uso de memÃ³ria do terminal
 double estimateMemoryCost(const Terminal* terminal);
 
-// Função para salvar o conteúdo do terminal em um arquivo
+// FunÃ§Ã£o para salvar o conteÃºdo do terminal em um arquivo
 void saveFile(Terminal* terminal);
-
-// Função para inicializar um buffer vazio
-static bool initEmptyBuffer(Terminal* terminal);
-
-// Função para carregar linhas de um arquivo para o terminal
-static bool loadFileLines(Terminal* terminal, const char* path);

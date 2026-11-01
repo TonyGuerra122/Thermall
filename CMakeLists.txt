@@ -35,6 +35,13 @@ link_directories(${PDCURSES_SOURCE_DIR}/wincon)
 # Adiciona o executável
 add_executable(Thermall src/main.c "include/line_text.h" "src/text_line.c" "include/terminal.h" "src/terminal.c")
 
+target_include_directories(Thermall PRIVATE include)
+
+# Fontes em UTF-8
+if(MSVC)
+    target_compile_options(Thermall PRIVATE /utf-8)
+endif()
+
 # Assegura que a biblioteca PDCurses é construída antes do projeto principal
 add_dependencies(Thermall PDCurses)
 
