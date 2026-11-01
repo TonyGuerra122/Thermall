@@ -8,6 +8,12 @@ typedef enum {
 	LOAD_ERROR
 } LoadResult;
 
+// Uma tecla lida: 'special' indica tecla de função (KEY_*); senão 'code' é um ponto de código Unicode
+typedef struct {
+	bool special;
+	int code;
+} Key;
+
 // Mensagem mostrada na linha de status (substitui as saídas em stderr, que bagunçam o curses)
 static char statusMsg[160];
 
@@ -22,29 +28,45 @@ static char* duplicateString(const char* s) {
 	return copy;
 }
 
+// --- Gerenciamento das linhas ---
+
+static LineText* newLine(const char* text, size_t length) {
+	LineText* line = (LineText*)malloc(sizeof(LineText));
+	if (!line) return NULL;
+
+	if (!create_line_text(line, text, length)) {
+		free(line);
+		return NULL;
+	}
+	return line;
+}
+
+static void destroyLine(LineText* line) {
+	if (!line) return;
+	destroy_line_text(line);
+	free(line);
+}
+
 static bool initEmptyBuffer(Terminal* terminal) {
 	terminal->lines = (LineText**)malloc(sizeof(LineText*));
 	if (!terminal->lines) return false;
 
-	LineText* line = (LineText*)malloc(sizeof(LineText));
-	if (!line) {
+	terminal->lines[0] = newLine("", 0);
+	if (!terminal->lines[0]) {
 		free(terminal->lines);
 		terminal->lines = NULL;
 		return false;
 	}
 
-	create_line_text(line, "");
-	terminal->lines[0] = line;
 	terminal->lineCount = 1;
 	terminal->isSaved = true;
-
 	return true;
 }
 
 static void freeLines(Terminal* terminal) {
 	if (terminal->lines) {
 		for (size_t i = 0; i < terminal->lineCount; i++) {
-			free(terminal->lines[i]);
+			destroyLine(terminal->lines[i]);
 		}
 		free(terminal->lines);
 	}
@@ -53,11 +75,13 @@ static void freeLines(Terminal* terminal) {
 }
 
 static void removeLine(Terminal* terminal, size_t index) {
-	free(terminal->lines[index]);
+	destroyLine(terminal->lines[index]);
 	memmove(&terminal->lines[index], &terminal->lines[index + 1],
 		sizeof(LineText*) * (terminal->lineCount - index - 1));
 	terminal->lineCount--;
 }
+
+// --- Arquivo ---
 
 static LoadResult loadFileLines(Terminal* terminal, const char* path) {
 	FILE* f = fopen(path, "rb");
@@ -96,15 +120,6 @@ static LoadResult loadFileLines(Terminal* terminal, const char* path) {
 		// Arquivo terminado em '\n' não gera uma linha vazia extra
 		if (i == readn && len == 0 && readn > 0 && buf[readn - 1] == '\n') break;
 
-		if (len >= MAX_LINE_LENGTH) {
-			error = "File has a line that is too long";
-			goto fail;
-		}
-		if (terminal->lineCount >= MAX_LINES) {
-			error = "File has too many lines";
-			goto fail;
-		}
-
 		if (terminal->lineCount == cap) {
 			LineText** grown = (LineText**)realloc(terminal->lines, cap * 2 * sizeof(LineText*));
 			if (!grown) goto fail;
@@ -112,13 +127,8 @@ static LoadResult loadFileLines(Terminal* terminal, const char* path) {
 			cap *= 2;
 		}
 
-		LineText* line = (LineText*)malloc(sizeof(LineText));
+		LineText* line = newLine(start, len);
 		if (!line) goto fail;
-
-		create_line_text(line, "");
-		memcpy(line->text, start, len);
-		line->text[len] = '\0';
-		line->length = len;
 		terminal->lines[terminal->lineCount++] = line;
 
 		start = buf + i + 1;
@@ -142,6 +152,38 @@ fail:
 	fprintf(stderr, "%s: %s\n", path, error);
 	return LOAD_ERROR;
 }
+
+void saveFile(Terminal* terminal) {
+	if (!terminal) return;
+	if (!terminal->filename) {
+		setMessage("No file name. Start the program with a file name to be able to save.");
+		return;
+	}
+
+	FILE* file = fopen(terminal->filename, "w");
+	if (!file) {
+		setMessage("Failed to open file for writing");
+		return;
+	}
+
+	bool ok = true;
+	for (size_t i = 0; i < terminal->lineCount && ok; i++) {
+		const LineText* line = terminal->lines[i];
+		ok = fwrite(line->text, 1, line->length, file) == line->length && fputc('\n', file) != EOF;
+	}
+
+	if (fclose(file) != 0) ok = false;
+
+	if (ok) {
+		terminal->isSaved = true;
+		setMessage("File saved");
+	}
+	else {
+		setMessage("Failed to write file");
+	}
+}
+
+// --- Ciclo de vida ---
 
 Terminal* createTerminal(const char* filename) {
 	Terminal* terminal = (Terminal*)calloc(1, sizeof(Terminal));
@@ -182,231 +224,6 @@ Terminal* createTerminal(const char* filename) {
 	return terminal;
 }
 
-static void clampCursorX(const Terminal* terminal, int cursorY, int* cursorX) {
-	if ((size_t)*cursorX > terminal->lines[cursorY]->length) {
-		*cursorX = (int)terminal->lines[cursorY]->length;
-	}
-}
-
-static void draw(const Terminal* terminal, size_t* viewTop, int cursorY, int cursorX) {
-	size_t rows = LINES > 1 ? (size_t)LINES - 1 : 1;
-
-	// Faz a rolagem acompanhar o cursor
-	if ((size_t)cursorY < *viewTop) {
-		*viewTop = (size_t)cursorY;
-	}
-	else if ((size_t)cursorY >= *viewTop + rows) {
-		*viewTop = (size_t)cursorY - rows + 1;
-	}
-
-	erase();
-
-	for (size_t i = 0; i < rows; i++) {
-		size_t lineIndex = *viewTop + i;
-		if (lineIndex >= terminal->lineCount) break;
-
-		mvaddnstr((int)i, 0, terminal->lines[lineIndex]->text, COLS);
-	}
-
-	char status[256];
-	if (statusMsg[0]) {
-		snprintf(status, sizeof(status), "%s", statusMsg);
-	}
-	else {
-		snprintf(status, sizeof(status), "File: (%s) Line: %d Column: %d Total Lines: %zu Mem: %.2fMB Saved: %s",
-			terminal->filename ? terminal->filename : "[No Name]",
-			cursorY + 1, cursorX + 1, terminal->lineCount,
-			estimateMemoryCost(terminal),
-			terminal->isSaved ? "(Saved)" : "(Unsaved)");
-	}
-	mvaddnstr(LINES - 1, 0, status, COLS);
-
-	move((int)((size_t)cursorY - *viewTop), cursorX);
-	refresh();
-}
-
-void handleTerminalInput(Terminal* terminal) {
-	int ch, cursorX = 0, cursorY = 0;
-	size_t viewTop = 0;
-	bool mustExit = false;
-
-	while (!mustExit) {
-		draw(terminal, &viewTop, cursorY, cursorX);
-
-		ch = getch();
-		if (ch == ERR) break;
-
-		statusMsg[0] = '\0';
-
-		switch (ch) {
-		case 27:
-			if (!terminal->isSaved) {
-				mvaddnstr(LINES - 1, 0, "Unsaved changes. Press 'q' to quit without saving or any other key to continue.", COLS);
-				refresh();
-				int quitCh = getch();
-				if (quitCh == 'q' || quitCh == 'Q') {
-					mustExit = true;
-				}
-				else if (quitCh != ERR && quitCh != 27) {
-					// Devolve a tecla para ela não ser perdida
-					ungetch(quitCh);
-				}
-			}
-			else {
-				mustExit = true;
-			}
-			break;
-		case KEY_RESIZE:
-			resize_term(0, 0);
-			break;
-		case 19: // Ctrl+S
-			saveFile(terminal);
-			break;
-		case KEY_UP:
-			if (cursorY > 0) cursorY--;
-			clampCursorX(terminal, cursorY, &cursorX);
-			break;
-		case KEY_DOWN:
-			if ((size_t)cursorY + 1 < terminal->lineCount) {
-				cursorY++;
-				clampCursorX(terminal, cursorY, &cursorX);
-			}
-			break;
-		case KEY_LEFT:
-			if (cursorX > 0) {
-				cursorX--;
-			}
-			else if (cursorY > 0) {
-				cursorY--;
-				cursorX = (int)terminal->lines[cursorY]->length;
-			}
-			break;
-		case KEY_RIGHT:
-			if ((size_t)cursorX < terminal->lines[cursorY]->length) {
-				cursorX++;
-			}
-			else if ((size_t)cursorY + 1 < terminal->lineCount) {
-				cursorY++;
-				cursorX = 0;
-			}
-			break;
-		case '\n':
-		case '\r':
-		case KEY_ENTER: {
-			if (terminal->lineCount >= MAX_LINES) {
-				setMessage("Maximum number of lines reached");
-				break;
-			}
-
-			LineText* current = terminal->lines[cursorY];
-
-			LineText* newLine = (LineText*)malloc(sizeof(LineText));
-			if (!newLine) {
-				setMessage("Memory allocation failed");
-				break;
-			}
-
-			LineText** newLines = (LineText**)realloc(terminal->lines, sizeof(LineText*) * (terminal->lineCount + 1));
-			if (!newLines) {
-				free(newLine);
-				setMessage("Memory allocation failed");
-				break;
-			}
-			terminal->lines = newLines;
-
-			// Divide a linha atual na posição do cursor
-			create_line_text(newLine, &current->text[cursorX]);
-			current->text[cursorX] = '\0';
-			current->length = (size_t)cursorX;
-
-			memmove(&terminal->lines[cursorY + 2], &terminal->lines[cursorY + 1],
-				sizeof(LineText*) * (terminal->lineCount - (size_t)cursorY - 1));
-			terminal->lines[cursorY + 1] = newLine;
-			terminal->lineCount++;
-
-			cursorY++;
-			cursorX = 0;
-			terminal->isSaved = false;
-			break;
-		}
-		case KEY_BACKSPACE:
-		case 127:
-		case 8:
-			if (cursorX > 0) {
-				delete_char(terminal->lines[cursorY], (size_t)cursorX - 1);
-				cursorX--;
-				terminal->isSaved = false;
-			}
-			else if (cursorY > 0) {
-				LineText* currentLine = terminal->lines[cursorY];
-				LineText* prevLine = terminal->lines[cursorY - 1];
-
-				if (prevLine->length + currentLine->length >= MAX_LINE_LENGTH) {
-					setMessage("Cannot join lines: result would be too long");
-					break;
-				}
-
-				cursorX = (int)prevLine->length;
-				memcpy(prevLine->text + prevLine->length, currentLine->text, currentLine->length + 1);
-				prevLine->length += currentLine->length;
-
-				removeLine(terminal, (size_t)cursorY);
-				cursorY--;
-				terminal->isSaved = false;
-			}
-			break;
-		case KEY_DC:
-			if ((size_t)cursorX < terminal->lines[cursorY]->length) {
-				delete_char(terminal->lines[cursorY], (size_t)cursorX);
-				terminal->isSaved = false;
-			}
-			else if ((size_t)cursorY + 1 < terminal->lineCount) {
-				LineText* line = terminal->lines[cursorY];
-				LineText* nextLine = terminal->lines[cursorY + 1];
-
-				if (line->length + nextLine->length >= MAX_LINE_LENGTH) {
-					setMessage("Cannot join lines: result would be too long");
-					break;
-				}
-
-				memcpy(line->text + line->length, nextLine->text, nextLine->length + 1);
-				line->length += nextLine->length;
-
-				removeLine(terminal, (size_t)cursorY + 1);
-				terminal->isSaved = false;
-			}
-			break;
-		case KEY_PPAGE: {
-			int pageSize = LINES > 2 ? LINES - 1 : 1;
-
-			cursorY = cursorY > pageSize ? cursorY - pageSize : 0;
-			clampCursorX(terminal, cursorY, &cursorX);
-			break;
-		}
-		case KEY_NPAGE: {
-			int pageSize = LINES > 2 ? LINES - 1 : 1;
-
-			if ((size_t)cursorY + (size_t)pageSize < terminal->lineCount) {
-				cursorY += pageSize;
-			}
-			else {
-				cursorY = (int)terminal->lineCount - 1;
-			}
-			clampCursorX(terminal, cursorY, &cursorX);
-			break;
-		}
-		default:
-			if (ch >= 32 && ch <= 126 && cursorX < COLS - 1 &&
-				terminal->lines[cursorY]->length + 1 < MAX_LINE_LENGTH) {
-				insert_char(terminal->lines[cursorY], (size_t)cursorX, (char)ch);
-				cursorX++;
-				terminal->isSaved = false;
-			}
-			break;
-		}
-	}
-}
-
 void freeTerminal(Terminal* terminal) {
 	if (terminal) {
 		free(terminal->filename);
@@ -427,39 +244,327 @@ double estimateMemoryCost(const Terminal* terminal) {
 
 	for (size_t i = 0; i < terminal->lineCount; i++) {
 		if (terminal->lines[i])
-			totalSize += sizeof(LineText);
+			totalSize += sizeof(LineText) + terminal->lines[i]->capacity;
 	}
 
 	return totalSize / (1024.0 * 1024.0);
 }
 
-void saveFile(Terminal* terminal) {
-	if (!terminal) return;
-	if (!terminal->filename) {
-		setMessage("No file name. Start the program with a file name to be able to save.");
-		return;
-	}
+// --- Desenho ---
 
-	FILE* file = fopen(terminal->filename, "w");
-	if (!file) {
-		setMessage("Failed to open file for writing");
-		return;
-	}
+// Corta 's' (UTF-8) para caber em 'cols' colunas, sem partir um caractere no meio
+static void fitToWidth(char* s, int cols) {
+	size_t len = strlen(s);
+	size_t pos = 0;
 
-	bool ok = true;
-	for (size_t i = 0; i < terminal->lineCount && ok; i++) {
-		if (terminal->lines[i]) {
-			ok = fprintf(file, "%s\n", terminal->lines[i]->text) >= 0;
+	for (int col = 0; pos < len && col < cols; col++) {
+		pos = utf8_next(s, len, pos);
+	}
+	s[pos] = '\0';
+}
+
+static void showStatusLine(const char* text) {
+	char buf[512];
+	snprintf(buf, sizeof(buf), "%s", text);
+	fitToWidth(buf, COLS);
+
+	move(LINES - 1, 0);
+	clrtoeol();
+	addstr(buf);
+}
+
+// Monta em 'out' a parte da linha visível entre as colunas [viewLeft, viewLeft + width).
+// 'out' precisa ter pelo menos width * 4 + 1 bytes.
+static void renderRow(const LineText* line, size_t viewLeft, size_t width, char* out) {
+	size_t col = 0, pos = 0;
+	size_t viewRight = viewLeft + width;
+
+	while (pos < line->length && col < viewRight) {
+		unsigned char c = (unsigned char)line->text[pos];
+		size_t w = line_cell_width(line, pos, col);
+		size_t seq = utf8_seq_len(line->text + pos, line->length - pos);
+
+		if (c == '\t') {
+			for (size_t k = 0; k < w; k++) {
+				if (col + k >= viewLeft && col + k < viewRight) *out++ = ' ';
+			}
 		}
+		else if (col >= viewLeft) {
+			if (seq == 0 || c < 32 || c == 127) {
+				*out++ = '?'; // byte inválido ou caractere de controle
+			}
+			else {
+				memcpy(out, line->text + pos, seq);
+				out += seq;
+			}
+		}
+
+		col += w;
+		pos += seq ? seq : 1;
 	}
 
-	if (fclose(file) != 0) ok = false;
+	*out = '\0';
+}
 
-	if (ok) {
-		terminal->isSaved = true;
-		setMessage("File saved");
+static void draw(const Terminal* terminal, size_t* viewTop, size_t* viewLeft, size_t cursorY, size_t cursorX) {
+	size_t rows = LINES > 1 ? (size_t)LINES - 1 : 1;
+	size_t width = COLS > 0 ? (size_t)COLS : 1;
+	size_t cursorCol = line_display_col(terminal->lines[cursorY], cursorX);
+
+	// Faz a rolagem vertical e horizontal acompanhar o cursor
+	if (cursorY < *viewTop) *viewTop = cursorY;
+	else if (cursorY >= *viewTop + rows) *viewTop = cursorY - rows + 1;
+
+	if (cursorCol < *viewLeft) *viewLeft = cursorCol;
+	else if (cursorCol >= *viewLeft + width) *viewLeft = cursorCol - width + 1;
+
+	erase();
+
+	char* rowBuf = (char*)malloc(width * 4 + 1);
+	if (rowBuf) {
+		for (size_t i = 0; i < rows; i++) {
+			size_t lineIndex = *viewTop + i;
+			if (lineIndex >= terminal->lineCount) break;
+
+			renderRow(terminal->lines[lineIndex], *viewLeft, width, rowBuf);
+			mvaddstr((int)i, 0, rowBuf);
+		}
+		free(rowBuf);
+	}
+
+	char status[512];
+	if (statusMsg[0]) {
+		snprintf(status, sizeof(status), "%s", statusMsg);
 	}
 	else {
-		setMessage("Failed to write file");
+		snprintf(status, sizeof(status), "File: (%s) Line: %zu Column: %zu Total Lines: %zu Mem: %.2fMB Saved: %s",
+			terminal->filename ? terminal->filename : "[No Name]",
+			cursorY + 1, cursorCol + 1, terminal->lineCount,
+			estimateMemoryCost(terminal),
+			terminal->isSaved ? "(Saved)" : "(Unsaved)");
+	}
+	showStatusLine(status);
+
+	move((int)(cursorY - *viewTop), (int)(cursorCol - *viewLeft));
+	refresh();
+}
+
+// --- Entrada ---
+
+static bool readKey(Key* key) {
+	wint_t wch = 0;
+	int result = get_wch(&wch);
+	if (result == ERR) return false;
+
+	key->special = (result == KEY_CODE_YES);
+	key->code = (int)wch;
+	return true;
+}
+
+// Caractere imprimível (ASCII ou Unicode), excluindo controles e surrogates
+static bool isPrintable(const Key* key) {
+	if (key->special) return false;
+	int c = key->code;
+	return (c >= 32 && c < 127) || (c >= 0xA0 && c < 0xD800) || (c > 0xDFFF && c <= 0x10FFFF);
+}
+
+// Junta a linha 'index + 1' no fim da linha 'index'. Devolve false (com mensagem) se faltar memória.
+static bool joinWithNext(Terminal* terminal, size_t index) {
+	LineText* line = terminal->lines[index];
+	LineText* next = terminal->lines[index + 1];
+
+	if (!insert_text(line, line->length, next->text, next->length)) {
+		setMessage("Memory allocation failed");
+		return false;
+	}
+
+	removeLine(terminal, index + 1);
+	return true;
+}
+
+void handleTerminalInput(Terminal* terminal) {
+	size_t cursorX = 0, cursorY = 0; // cursorX é a posição em bytes dentro da linha
+	size_t goalCol = 0;              // coluna desejada ao mover verticalmente
+	size_t viewTop = 0, viewLeft = 0;
+	bool mustExit = false;
+
+	Key pending = { false, 0 };
+	bool hasPending = false;
+
+	while (!mustExit) {
+		draw(terminal, &viewTop, &viewLeft, cursorY, cursorX);
+
+		Key key;
+		if (hasPending) {
+			key = pending;
+			hasPending = false;
+		}
+		else if (!readKey(&key)) {
+			break;
+		}
+
+		statusMsg[0] = '\0';
+		bool vertical = false;
+		size_t pageSize = LINES > 2 ? (size_t)LINES - 1 : 1;
+
+		if (isPrintable(&key) || (!key.special && key.code == '\t')) {
+			char encoded[4];
+			size_t n = key.code == '\t' ? (encoded[0] = '\t', 1) : utf8_encode((uint32_t)key.code, encoded);
+
+			if (insert_text(terminal->lines[cursorY], cursorX, encoded, n)) {
+				cursorX += n;
+				terminal->isSaved = false;
+			}
+			else {
+				setMessage("Memory allocation failed");
+			}
+		}
+		else if (key.special || key.code < 0x100) {
+			switch (key.code) {
+			case 27: // Esc
+				if (!terminal->isSaved) {
+					showStatusLine("Unsaved changes. Press 'q' to quit without saving or any other key to continue.");
+					refresh();
+
+					Key answer;
+					if (readKey(&answer)) {
+						if (!answer.special && (answer.code == 'q' || answer.code == 'Q')) {
+							mustExit = true;
+						}
+						else if (answer.special || answer.code != 27) {
+							// Guarda a tecla para ela não ser perdida
+							pending = answer;
+							hasPending = true;
+						}
+					}
+				}
+				else {
+					mustExit = true;
+				}
+				break;
+			case KEY_RESIZE:
+				resize_term(0, 0);
+				break;
+			case 19: // Ctrl+S
+				saveFile(terminal);
+				break;
+			case KEY_UP:
+				vertical = true;
+				if (cursorY > 0) cursorY--;
+				cursorX = line_col_to_byte(terminal->lines[cursorY], goalCol);
+				break;
+			case KEY_DOWN:
+				vertical = true;
+				if (cursorY + 1 < terminal->lineCount) cursorY++;
+				cursorX = line_col_to_byte(terminal->lines[cursorY], goalCol);
+				break;
+			case KEY_PPAGE:
+				vertical = true;
+				cursorY = cursorY > pageSize ? cursorY - pageSize : 0;
+				cursorX = line_col_to_byte(terminal->lines[cursorY], goalCol);
+				break;
+			case KEY_NPAGE:
+				vertical = true;
+				cursorY = cursorY + pageSize < terminal->lineCount ? cursorY + pageSize : terminal->lineCount - 1;
+				cursorX = line_col_to_byte(terminal->lines[cursorY], goalCol);
+				break;
+			case KEY_LEFT:
+				if (cursorX > 0) {
+					cursorX = utf8_prev(terminal->lines[cursorY]->text, cursorX);
+				}
+				else if (cursorY > 0) {
+					cursorY--;
+					cursorX = terminal->lines[cursorY]->length;
+				}
+				break;
+			case KEY_RIGHT: {
+				LineText* line = terminal->lines[cursorY];
+				if (cursorX < line->length) {
+					cursorX = utf8_next(line->text, line->length, cursorX);
+				}
+				else if (cursorY + 1 < terminal->lineCount) {
+					cursorY++;
+					cursorX = 0;
+				}
+				break;
+			}
+			case KEY_HOME:
+				cursorX = 0;
+				break;
+			case KEY_END:
+				cursorX = terminal->lines[cursorY]->length;
+				break;
+			case '\n':
+			case '\r':
+			case KEY_ENTER: {
+				LineText* current = terminal->lines[cursorY];
+
+				LineText* tail = newLine(current->text + cursorX, current->length - cursorX);
+				if (!tail) {
+					setMessage("Memory allocation failed");
+					break;
+				}
+
+				LineText** newLines = (LineText**)realloc(terminal->lines, sizeof(LineText*) * (terminal->lineCount + 1));
+				if (!newLines) {
+					destroyLine(tail);
+					setMessage("Memory allocation failed");
+					break;
+				}
+				terminal->lines = newLines;
+
+				truncate_line(current, cursorX);
+
+				memmove(&terminal->lines[cursorY + 2], &terminal->lines[cursorY + 1],
+					sizeof(LineText*) * (terminal->lineCount - cursorY - 1));
+				terminal->lines[cursorY + 1] = tail;
+				terminal->lineCount++;
+
+				cursorY++;
+				cursorX = 0;
+				terminal->isSaved = false;
+				break;
+			}
+			case KEY_BACKSPACE:
+			case 127:
+			case 8:
+				if (cursorX > 0) {
+					LineText* line = terminal->lines[cursorY];
+					size_t prev = utf8_prev(line->text, cursorX);
+					delete_range(line, prev, cursorX - prev);
+					cursorX = prev;
+					terminal->isSaved = false;
+				}
+				else if (cursorY > 0) {
+					size_t joinPos = terminal->lines[cursorY - 1]->length;
+					if (joinWithNext(terminal, cursorY - 1)) {
+						cursorY--;
+						cursorX = joinPos;
+						terminal->isSaved = false;
+					}
+				}
+				break;
+			case KEY_DC: {
+				LineText* line = terminal->lines[cursorY];
+				if (cursorX < line->length) {
+					size_t next = utf8_next(line->text, line->length, cursorX);
+					delete_range(line, cursorX, next - cursorX);
+					terminal->isSaved = false;
+				}
+				else if (cursorY + 1 < terminal->lineCount) {
+					if (joinWithNext(terminal, cursorY)) {
+						terminal->isSaved = false;
+					}
+				}
+				break;
+			}
+			default:
+				break;
+			}
+		}
+
+		if (!vertical) {
+			goalCol = line_display_col(terminal->lines[cursorY], cursorX);
+		}
 	}
 }

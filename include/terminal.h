@@ -4,8 +4,6 @@
 #include <stdbool.h>
 #include "line_text.h"
 
-#define MAX_LINES 1000
-
 typedef struct {
 	char* filename;
 	LineText** lines;
